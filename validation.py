@@ -6,13 +6,13 @@ from sklearn.metrics import r2_score, mean_absolute_error
 from sklearn.model_selection import KFold
 from data.metrics import get_smoothed_mean_log_accuracy_ratio
 
-## Target
+## Target processing
 def box_cox(x, lmbda):
     return (x ** lmbda - 1) / lmbda
 
-
 def anti_box_cox(x, lmbda):
-    return (np.sign(x) * lmbda * np.abs(x) + 1) ** (1 / lmbda)
+    x = lmbda * x + 1
+    return np.sign(x) * np.abs(x) ** (1 / lmbda)
 
 
 ### Features
@@ -134,7 +134,7 @@ def s_mape(y, y_hat, s=False):
         return np.mean(100 * np.abs(y - y_hat) / np.abs(y))
 
 
-def run_cv(X, ys, pars, cat_feature=None, num_folds=5, score=r2_score, make_box_cox=False, drop_noise=False):
+def run_cv(X, ys, pars, models_path=None, cat_feature=None, num_folds=5, score=r2_score, box_cox_lmbda=-1.0, drop_noise=False):
 
     train_scores_hist = []
     test_scores_hist = []
@@ -150,11 +150,12 @@ def run_cv(X, ys, pars, cat_feature=None, num_folds=5, score=r2_score, make_box_
         for j, y in enumerate(ys):
             y_train, y_test = y[train_index], y[test_index]
 
-            if make_box_cox:
-                y_train = box_cox(y_train, .26)
+            if box_cox_lmbda > 0:
+                y_train = box_cox(y_train, box_cox_lmbda)
+                y_test = box_cox(y_test, box_cox_lmbda)
 
             model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_test, y_test)],
-                      verbose=100,
+                      verbose=False,
                       early_stopping_rounds=100)
 
             if drop_noise:
@@ -168,12 +169,15 @@ def run_cv(X, ys, pars, cat_feature=None, num_folds=5, score=r2_score, make_box_
                           verbose=False)
                 y_train_hat = model.predict(X_train)
 
+            if models_path:
+                model.booster_.save_model(models_path[j] + str(i) + '.txt')
+
             y_train_hat = model.predict(X_train)
             y_test_hat = model.predict(X_test)
 
-            if make_box_cox:
-                print(y_test_hat)
-                y_test_hat = anti_box_cox(y_test_hat, .26)
+            if box_cox_lmbda > 0:
+                y_test_hat = anti_box_cox(y_test_hat, box_cox_lmbda)
+                y_test = anti_box_cox(y_test, box_cox_lmbda)
 
             answers[str(j)] = y_test
             responses[str(j)] = y_test_hat
@@ -191,6 +195,8 @@ def run_cv(X, ys, pars, cat_feature=None, num_folds=5, score=r2_score, make_box_
     return test_scores_hist, model
 
 if __name__ == '__main__':
+
+    models_path = ['./deploy/models/one/', './deploy/models/two/', './deploy/models/three/']
 
     validate_answers = pd.read_csv('./validate_answers.tsv', delimiter='\t')
     validate = pd.read_csv('./validate.tsv', delimiter='\t')
@@ -223,8 +229,18 @@ if __name__ == '__main__':
             'learning_rate': 0.05,
             'num_leaves': 31}
 
-    test_scores_hist, model = run_cv(X, [y1, y2, y3], pars, make_box_cox=True)
-    print('score: {} +/- {}'.format(np.mean(test_scores_hist), np.std(test_scores_hist)))
-    sorted([x for x in zip(features, model.feature_importances_)], key=lambda x: x[1], reverse=True)
+    history = []
+    ls = [0.23]
+    for lmbda in ls:
+        test_scores_hist, model = run_cv(X, [y1, y2, y3], pars, box_cox_lmbda=lmbda, models_path=models_path)
+        print('lmbda: {}\tscore: {} +/- {}'.format(lmbda, np.mean(test_scores_hist), np.std(test_scores_hist)))
+        history.append(np.mean(test_scores_hist))
+
+    """
+    plt.figure()
+    plt.plot(ls, history)
+    plt.savefig('./box_cox2.png')
+    """
+    print(sorted([x for x in zip(features, model.feature_importances_)], key=lambda x: x[1], reverse=True))
 
 
