@@ -1,8 +1,12 @@
-from utils import get_history_users_features, get_test_features, make_prediction
+import os
 import sys
+
 import pandas as pd
 import lightgbm as lgb
-import os
+
+from utils import get_history_users_features, get_test_features, make_prediction
+
+
 
 def load_estimators(paths):
     estimators = []
